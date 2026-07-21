@@ -209,18 +209,26 @@ function saveOrder(ss, orderId, order) {
 
   if (!sheet) {
     sheet = ss.insertSheet("Orders");
-    sheet.getRange(1, 1, 1, 10)
-      .setValues([["Order ID", "Date & Time", "Buyer Name", "Username", "Telegram ID",
-                   "Items", "Subtotal ($)", "Delivery ($)", "Total ($)", "Status"]])
+    sheet.getRange(1, 1, 1, 13)
+      .setValues([[
+        "Order ID", "Date & Time",
+        "First Name", "Last Name", "Username", "Telegram ID",
+        "Language", "Premium",
+        "Items",
+        "Subtotal ($)", "Delivery ($)", "Total ($)", "Status"
+      ]])
       .setFontWeight("bold");
   }
 
   sheet.appendRow([
     orderId,
     new Date(),
-    order.buyerName   || "",
-    order.username    || "",
+    order.firstName   || order.buyerName || "",
+    order.lastName    || "",
+    order.username    ? "@" + order.username : "",
     order.telegramId  || "",
+    order.languageCode || "",
+    order.isPremium   ? "Yes" : "No",
     order.itemsSummary || "",
     Number(order.subtotal) || 0,
     Number(order.delivery) || 0,
@@ -236,9 +244,12 @@ function upsertCustomer(ss, order) {
 
   if (!sheet) {
     sheet = ss.insertSheet("Customers");
-    sheet.getRange(1, 1, 1, 7)
-      .setValues([["Chat ID", "Buyer Name", "Username",
-                   "First Order", "Last Order", "Total Orders", "Total Spent ($)"]])
+    sheet.getRange(1, 1, 1, 9)
+      .setValues([[
+        "Chat ID", "First Name", "Last Name", "Username",
+        "Language", "Premium",
+        "First Order", "Last Order", "Total Orders", "Total Spent ($)"
+      ]])
       .setFontWeight("bold");
   }
 
@@ -249,15 +260,22 @@ function upsertCustomer(ss, order) {
   if (idx === -1) {
     sheet.appendRow([
       order.telegramId,
-      order.buyerName || "",
-      order.username  || "",
+      order.firstName   || order.buyerName || "",
+      order.lastName    || "",
+      order.username    ? "@" + order.username : "",
+      order.languageCode || "",
+      order.isPremium   ? "Yes" : "No",
       new Date(), new Date(), 1, Number(order.total) || 0
     ]);
   } else {
     var r = idx + 2;
-    sheet.getRange(r, 5).setValue(new Date());
-    sheet.getRange(r, 6).setValue((Number(data[idx + 1][5]) || 0) + 1);
-    sheet.getRange(r, 7).setValue((Number(data[idx + 1][6]) || 0) + (Number(order.total) || 0));
+    // Update name fields in case they changed
+    sheet.getRange(r, 2).setValue(order.firstName || order.buyerName || "");
+    sheet.getRange(r, 3).setValue(order.lastName  || "");
+    sheet.getRange(r, 4).setValue(order.username  ? "@" + order.username : "");
+    sheet.getRange(r, 8).setValue(new Date());
+    sheet.getRange(r, 9).setValue((Number(data[idx + 1][8]) || 0) + 1);
+    sheet.getRange(r, 10).setValue((Number(data[idx + 1][9]) || 0) + (Number(order.total) || 0));
   }
 }
 
@@ -269,13 +287,26 @@ function notifySeller(orderId, order) {
   var chatId = PropertiesService.getScriptProperties().getProperty(SELLER_CHAT_KEY);
   if (!chatId || !BOT_TOKEN) return;
 
+  var fullName  = [order.firstName || order.buyerName, order.lastName].filter(Boolean).join(" ") || "Guest";
+  var contactLink = order.telegramId
+    ? '<a href="tg://user?id=' + order.telegramId + '">💬 Tap to message buyer</a>'
+    : "";
+
   var msg =
     "🛍️ <b>NEW ORDER — " + orderId + "</b>\n\n" +
-    "👤 " + esc(order.buyerName || "Guest") +
-    (order.username  ? "  (@" + esc(order.username) + ")\n" : "\n") +
+
+    "━━━━ CUSTOMER ━━━━\n" +
+    "👤 <b>" + esc(fullName) + "</b>" +
+    (order.isPremium ? " ⭐" : "") + "\n" +
+    (order.username   ? "📎 @" + esc(order.username) + "\n" : "") +
     (order.telegramId ? "🆔 " + esc(String(order.telegramId)) + "\n" : "") +
+    (order.languageCode ? "🌐 " + esc(order.languageCode.toUpperCase()) + "\n" : "") +
+    (contactLink ? contactLink + "\n" : "") +
+
     "\n━━━━ ITEMS ━━━━\n" +
     esc(order.itemsSummary || "") + "\n\n" +
+
+    "━━━━ PAYMENT ━━━━\n" +
     "💰 Subtotal : $" + fmt(order.subtotal) + "\n" +
     "🚚 Delivery : " + (Number(order.delivery) === 0 ? "FREE 🎉" : "$" + fmt(order.delivery)) + "\n" +
     "✅ <b>TOTAL: $" + fmt(order.total) + "</b>";
@@ -286,13 +317,23 @@ function notifySeller(orderId, order) {
 function notifyBuyer(orderId, order) {
   if (!order.telegramId || !BOT_TOKEN) return;
 
+  var firstName = order.firstName || order.buyerName || "";
+  var greeting  = firstName ? "Hi <b>" + esc(firstName) + "</b>! 👋\n\n" : "";
+
   var msg =
     "✅ <b>Order Received!</b>\n\n" +
+    greeting +
     "📦 Order ID: <code>" + orderId + "</code>\n\n" +
+
+    "━━━━ YOUR ORDER ━━━━\n" +
     esc(order.itemsSummary || "") + "\n\n" +
-    "💰 Total: <b>$" + fmt(order.total) + "</b>\n\n" +
-    "We'll contact you on Telegram to confirm your order.\n" +
-    "Thank you for shopping at TK Online Shop! 🛍️";
+
+    "💰 Subtotal : $" + fmt(order.subtotal) + "\n" +
+    "🚚 Delivery : " + (Number(order.delivery) === 0 ? "FREE 🎉" : "$" + fmt(order.delivery)) + "\n" +
+    "✅ <b>Total: $" + fmt(order.total) + "</b>\n\n" +
+
+    "We'll contact you shortly to confirm your order. 🙏\n" +
+    "<b>TK Online Shop</b> 🛍️";
 
   sendTg(String(order.telegramId), msg);
 }

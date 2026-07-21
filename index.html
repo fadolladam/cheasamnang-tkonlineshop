@@ -2808,14 +2808,21 @@
       const total    = subtotal + delivery;
       const orderId  = "ORD-" + Date.now();
 
+      const firstName  = user?.first_name    || "";
+      const lastName   = user?.last_name     || "";
+      const buyerName  = user ? `${firstName} ${lastName}`.trim() : "Guest";
+
       const orderData = {
         type:         "order",
         orderId:      orderId,
-        buyerName:    user
-          ? (user.first_name + " " + (user.last_name || "")).trim()
-          : "Guest",
-        username:     user?.username  || "",
-        telegramId:   String(user?.id || ""),
+        buyerName:    buyerName,
+        firstName:    firstName,
+        lastName:     lastName,
+        username:     user?.username      || "",
+        telegramId:   String(user?.id     || ""),
+        languageCode: user?.language_code || "",
+        isPremium:    user?.is_premium    || false,
+        photoUrl:     user?.photo_url     || "",
         itemsSummary: createOrderMessage(),
         subtotal:     subtotal,
         delivery:     delivery,
@@ -2850,25 +2857,48 @@
       saveCart();
       updateCartBadge();
       closeCart();
-      showOrderConfirmation(orderId, total);
+      showOrderConfirmation(orderId, total, buyerName, user);
     }
 
-    function showOrderConfirmation(orderId, total) {
+    function showOrderConfirmation(orderId, total, buyerName, user) {
+      const greeting  = buyerName && buyerName !== "Guest"
+        ? `Thank you, <strong>${escapeHTML(buyerName)}</strong>!`
+        : "Thank you!";
+      const username  = user?.username ? `@${escapeHTML(user.username)}` : "";
+      const isPremium = user?.is_premium
+        ? `<span style="font-size:11px;background:#6c3bff;color:#fff;
+                        padding:2px 7px;border-radius:20px;margin-left:6px;">⭐ Premium</span>`
+        : "";
+
       confirmContent.innerHTML = `
-        <div style="text-align:center;padding:48px 20px 32px;">
-          <div style="font-size:60px;margin-bottom:18px;">✅</div>
-          <h2 style="margin:0 0 10px;font-size:22px;">Order Placed!</h2>
-          <p style="margin:0 0 6px;color:#6d6d6d;font-size:13px;">Order ID</p>
-          <p style="margin:0 0 20px;font-size:12px;font-family:monospace;
-                    background:#f7f7f7;padding:7px 14px;display:inline-block;">
-            ${escapeHTML(orderId)}
+        <div style="text-align:center;padding:40px 20px 32px;">
+          <div style="font-size:58px;margin-bottom:14px;">✅</div>
+
+          <h2 style="margin:0 0 4px;font-size:21px;">${greeting}</h2>
+
+          ${username
+            ? `<p style="margin:0 0 18px;color:#6d6d6d;font-size:13px;">
+                 ${username}${isPremium}
+               </p>`
+            : `<p style="margin:0 0 18px;"></p>`}
+
+          <div style="background:#f7f7f7;border-radius:6px;padding:14px 16px;
+                      margin-bottom:18px;text-align:left;">
+            <div style="font-size:11px;color:#999;margin-bottom:4px;text-transform:uppercase;
+                        letter-spacing:.5px;">Order ID</div>
+            <div style="font-size:12px;font-family:monospace;word-break:break-all;">
+              ${escapeHTML(orderId)}
+            </div>
+          </div>
+
+          <p style="margin:0 0 20px;font-size:17px;font-weight:700;">
+            Total: $${(Number(total) || 0).toFixed(2)}
           </p>
-          <p style="margin:0 0 24px;font-size:16px;">
-            Total: <strong>$${(Number(total) || 0).toFixed(2)}</strong>
-          </p>
-          <p style="margin:0;color:#555;font-size:13px;line-height:1.6;">
-            We'll contact you on Telegram to confirm your order.<br />
-            Thank you for shopping at TK Online Shop! 🛍️
+
+          <p style="margin:0;color:#555;font-size:13px;line-height:1.7;">
+            Your order has been received. 📦<br />
+            We'll contact you on Telegram to confirm.<br />
+            <span style="color:var(--primary);font-weight:700;">TK Online Shop 🛍️</span>
           </p>
         </div>
       `;
@@ -2876,9 +2906,8 @@
       confirmOverlay.hidden = false;
       lockBody();
 
-      // Auto-close Telegram Mini App after 4 s if running inside Telegram
       if (window.Telegram?.WebApp) {
-        setTimeout(() => window.Telegram.WebApp.close(), 4000);
+        setTimeout(() => window.Telegram.WebApp.close(), 5000);
       }
     }
 

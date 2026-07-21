@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "name": "tkonlineshop",
+  "builds": [
+    {
+      "src": "**/*",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options",  "value": "nosniff" },
+        { "key": "X-Frame-Options",          "value": "ALLOWALL" },
+        { "key": "Referrer-Policy",           "value": "no-referrer-when-downgrade" }
+      ]
+    }
+  ]
+}

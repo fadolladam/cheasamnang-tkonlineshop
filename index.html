@@ -991,6 +991,7 @@
       }
     }
   </style>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 
 <body>
@@ -1173,6 +1174,16 @@
       </div>
     </div>
   </section>
+
+  <div id="confirmOverlay" class="overlay" hidden>
+    <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <header class="drawer-header">
+        <h2 id="confirmTitle" class="drawer-title">Order Placed</h2>
+        <button id="closeConfirmBtn" class="icon-btn" type="button" aria-label="Close">×</button>
+      </header>
+      <div id="confirmContent" class="drawer-content"></div>
+    </section>
+  </div>
 
   <div id="toast" class="toast" hidden></div>
 
@@ -1483,6 +1494,10 @@
       =========================================================
     */
 
+    // Paste your Google Apps Script Web App URL here after deploying.
+    // Leave empty to use the hardcoded product data below as fallback.
+    const WEBHOOK_URL = "";
+
     const STORAGE_KEY = "tkonlineshop_cart_v1";
 
     const productDataElement = document.getElementById("productData");
@@ -1568,6 +1583,9 @@
     const closeMenuBtn = document.getElementById("closeMenuBtn");
     const menuAudienceList = document.getElementById("menuAudienceList");
     const menuCategoryList = document.getElementById("menuCategoryList");
+
+    const confirmOverlay  = document.getElementById("confirmOverlay");
+    const confirmContent  = document.getElementById("confirmContent");
 
     const footerMeta = document.getElementById("footerMeta");
     const toast = document.getElementById("toast");
@@ -1672,7 +1690,7 @@
     }
 
     function unlockBody() {
-      if (cartOverlay.hidden && menuOverlay.hidden) {
+      if (cartOverlay.hidden && menuOverlay.hidden && confirmOverlay.hidden) {
         document.body.classList.remove("no-scroll");
       }
     }
@@ -2782,43 +2800,86 @@
         return;
       }
 
-      const username = normalizeTelegramUsername(
-        store.telegramUsername
-      );
+      const tg   = window.Telegram?.WebApp;
+      const user = tg?.initDataUnsafe?.user;
 
-      const message = createOrderMessage();
+      const subtotal = getCartSubtotal();
+      const delivery = getDeliveryFee(subtotal);
+      const total    = subtotal + delivery;
+      const orderId  = "ORD-" + Date.now();
 
-      try {
-        await navigator.clipboard.writeText(message);
-        showToast("Order details copied.");
-      } catch (error) {
-        console.warn(
-          "Clipboard is unavailable:",
-          error
-        );
+      const orderData = {
+        type:         "order",
+        orderId:      orderId,
+        buyerName:    user
+          ? (user.first_name + " " + (user.last_name || "")).trim()
+          : "Guest",
+        username:     user?.username  || "",
+        telegramId:   String(user?.id || ""),
+        itemsSummary: createOrderMessage(),
+        subtotal:     subtotal,
+        delivery:     delivery,
+        total:        total
+      };
+
+      if (WEBHOOK_URL) {
+        try {
+          fetch(WEBHOOK_URL, {
+            method:  "POST",
+            mode:    "no-cors",
+            headers: { "Content-Type": "text/plain" },
+            body:    JSON.stringify(orderData)
+          });
+        } catch (err) {
+          console.warn("Order POST failed:", err);
+        }
+      } else {
+        // Fallback: open Telegram chat if no webhook configured
+        const username = normalizeTelegramUsername(store.telegramUsername);
+        if (username && username !== "your_telegram_username") {
+          try { await navigator.clipboard.writeText(orderData.itemsSummary); } catch (_) {}
+          window.open(
+            `https://t.me/${encodeURIComponent(username)}`,
+            "_blank",
+            "noopener,noreferrer"
+          );
+        }
       }
 
-      if (
-        !username ||
-        username === "your_telegram_username"
-      ) {
-        alert(
-          "Please update telegramUsername inside the product JSON.\n\n" +
-          "Your order details:\n\n" +
-          message
-        );
+      state.cart = [];
+      saveCart();
+      updateCartBadge();
+      closeCart();
+      showOrderConfirmation(orderId, total);
+    }
 
-        return;
+    function showOrderConfirmation(orderId, total) {
+      confirmContent.innerHTML = `
+        <div style="text-align:center;padding:48px 20px 32px;">
+          <div style="font-size:60px;margin-bottom:18px;">✅</div>
+          <h2 style="margin:0 0 10px;font-size:22px;">Order Placed!</h2>
+          <p style="margin:0 0 6px;color:#6d6d6d;font-size:13px;">Order ID</p>
+          <p style="margin:0 0 20px;font-size:12px;font-family:monospace;
+                    background:#f7f7f7;padding:7px 14px;display:inline-block;">
+            ${escapeHTML(orderId)}
+          </p>
+          <p style="margin:0 0 24px;font-size:16px;">
+            Total: <strong>$${(Number(total) || 0).toFixed(2)}</strong>
+          </p>
+          <p style="margin:0;color:#555;font-size:13px;line-height:1.6;">
+            We'll contact you on Telegram to confirm your order.<br />
+            Thank you for shopping at TK Online Shop! 🛍️
+          </p>
+        </div>
+      `;
+
+      confirmOverlay.hidden = false;
+      lockBody();
+
+      // Auto-close Telegram Mini App after 4 s if running inside Telegram
+      if (window.Telegram?.WebApp) {
+        setTimeout(() => window.Telegram.WebApp.close(), 4000);
       }
-
-      const telegramURL =
-        `https://t.me/${encodeURIComponent(username)}`;
-
-      window.open(
-        telegramURL,
-        "_blank",
-        "noopener,noreferrer"
-      );
     }
 
     function buySelectedProductNow() {
@@ -3196,6 +3257,11 @@
       closeProduct();
     });
 
+    document.getElementById("closeConfirmBtn").addEventListener("click", () => {
+      confirmOverlay.hidden = true;
+      unlockBody();
+    });
+
     window.addEventListener("popstate", () => {
       const params = new URLSearchParams(
         window.location.search
@@ -3236,37 +3302,52 @@
       =========================================================
     */
 
-    function initializeApp() {
-      document.title =
-        store.name || "TK Online Shop";
+    async function initializeApp() {
+      // Init Telegram Mini App SDK
+      const tg = window.Telegram?.WebApp;
+      if (tg) {
+        tg.ready();
+        tg.expand();
+      }
 
-      sortSelect.value = state.sort;
-
+      // Render immediately with hardcoded fallback data
       renderCatalogue();
       renderMenu();
       updateCartBadge();
+
+      // Load live data from Google Sheets via GAS (overrides hardcoded data)
+      if (WEBHOOK_URL) {
+        try {
+          const res  = await fetch(WEBHOOK_URL);
+          const data = await res.json();
+          if (data.store)                   Object.assign(store, data.store);
+          if (Array.isArray(data.products)) {
+            products.length = 0;
+            products.push(...data.products);
+          }
+          // Re-render with live data
+          renderCatalogue();
+          renderMenu();
+        } catch (err) {
+          console.warn("Could not load products from Google Sheets:", err);
+        }
+      }
+
+      document.title   = store.name || "TK Online Shop";
+      sortSelect.value = state.sort;
 
       footerMeta.textContent =
         `${products.length} products · ` +
         `${store.currency || "USD"} · ` +
         `Updated ${new Date().toLocaleDateString()}`;
 
-      const params = new URLSearchParams(
-        window.location.search
-      );
-
+      const params    = new URLSearchParams(window.location.search);
       const productId = params.get("product");
 
       if (productId && getProductById(productId)) {
         openProduct(productId, false);
       } else {
-        history.replaceState(
-          {
-            view: "catalogue"
-          },
-          "",
-          window.location.href
-        );
+        history.replaceState({ view: "catalogue" }, "", window.location.href);
       }
     }
 

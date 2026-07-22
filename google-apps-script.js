@@ -51,8 +51,8 @@
  *   currency            | USD
  *   currencySymbol      | $
  *   telegramUsername    | your_telegram_username
- *   deliveryFee         | 2
- *   freeDeliveryMinimum | 50
+ *   deliveryFee         | 1.5   (charged only when the order has 1 item;
+ *                                2+ items ship free)
  *
  * Sheets "Orders" and "Customers" are created automatically on first order.
  */
@@ -216,8 +216,7 @@ function getConfig(ss) {
     currency:            "USD",
     currencySymbol:      "$",
     telegramUsername:    "",
-    deliveryFee:         2,
-    freeDeliveryMinimum: 50
+    deliveryFee:         1.5
   };
 
   var sheet = ss.getSheetByName("Config");
@@ -229,8 +228,7 @@ function getConfig(ss) {
     if (row[0]) config[String(row[0]).trim()] = row[1];
   });
 
-  config.deliveryFee         = Number(config.deliveryFee)         || 0;
-  config.freeDeliveryMinimum = Number(config.freeDeliveryMinimum) || 0;
+  config.deliveryFee = Number(config.deliveryFee) || 0;
 
   return config;
 }

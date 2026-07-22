@@ -371,6 +371,28 @@
       text-transform: uppercase;
     }
 
+    .product-card.is-out-of-stock .product-image {
+      opacity: 0.45;
+    }
+
+    .out-of-stock-badge {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .out-of-stock-badge span {
+      padding: 6px 14px;
+      background: rgba(17, 17, 17, 0.85);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
     .product-info {
       padding-top: 9px;
     }
@@ -1254,7 +1276,7 @@
 
         <label class="contact-field">
           <span>Telegram phone number</span>
-          <input id="contactPhoneInput" type="tel" placeholder="+855 12 345 678" autocomplete="tel" />
+          <input id="contactPhoneInput" type="tel" placeholder="12 345 678" autocomplete="tel" />
         </label>
 
         <div class="contact-divider">or</div>
@@ -1321,8 +1343,7 @@
       "currency": "USD",
       "currencySymbol": "$",
       "telegramUsername": "your_telegram_username",
-      "deliveryFee": 2.00,
-      "freeDeliveryMinimum": 50.00
+      "deliveryFee": 1.50
     },
 
     "products": [
@@ -1614,8 +1635,7 @@
           currency: "USD",
           currencySymbol: "$",
           telegramUsername: "",
-          deliveryFee: 0,
-          freeDeliveryMinimum: 0
+          deliveryFee: 1.5
         },
         products: []
       };
@@ -1725,6 +1745,35 @@
         .replace(/^https?:\/\/t\.me\//i, "")
         .replace(/^@/, "")
         .replace(/\?.*$/, "");
+    }
+
+    const PHONE_COUNTRY_CODE = "+855";
+
+    function normalizePhone(phoneRaw) {
+      const trimmed = String(phoneRaw || "").trim();
+
+      if (!trimmed) {
+        return "";
+      }
+
+      if (trimmed.startsWith("+")) {
+        return trimmed;
+      }
+
+      // Local Cambodian numbers are typically written with a leading 0
+      // (e.g. 012 345 678) — drop it before adding the country code.
+      const local = trimmed.replace(/^0+/, "").trim();
+
+      return local ? `${PHONE_COUNTRY_CODE} ${local}` : "";
+    }
+
+    function phoneHasNumber(phoneRaw) {
+      const digits = String(phoneRaw || "").replace(/\D/g, "");
+      const national = digits.startsWith("855")
+        ? digits.slice(3)
+        : digits;
+
+      return national.length >= 6;
     }
 
     function getProductById(productId) {
@@ -1864,20 +1913,13 @@
       }, 0);
     }
 
-    function getDeliveryFee(subtotal) {
-      const configuredFee = Number(store.deliveryFee || 0);
-      const freeMinimum = Number(
-        store.freeDeliveryMinimum || 0
-      );
-
-      if (
-        freeMinimum > 0 &&
-        subtotal >= freeMinimum
-      ) {
+    function getDeliveryFee(quantity) {
+      // 1 item ships for a flat fee; 2 or more items ship free.
+      if (Number(quantity || 0) >= 2) {
         return 0;
       }
 
-      return configuredFee;
+      return Number(store.deliveryFee || 0);
     }
 
     function updateCartBadge() {
@@ -2107,6 +2149,9 @@
     */
 
     function renderProductCard(product) {
+      const isOutOfStock =
+        Number(product.stock || 0) <= 0;
+
       const hasSale =
         product.originalPrice !== null &&
         product.originalPrice !== undefined &&
@@ -2130,10 +2175,10 @@
 
       return `
         <button
-          class="product-card"
+          class="product-card ${isOutOfStock ? "is-out-of-stock" : ""}"
           type="button"
           data-product-id="${escapeHTML(product.id)}"
-          aria-label="View ${escapeHTML(product.name)}"
+          aria-label="View ${escapeHTML(product.name)}${isOutOfStock ? " (Out of Stock)" : ""}"
         >
           <div class="product-image-wrap">
             <img
@@ -2145,7 +2190,13 @@
             />
 
             ${
-              product.label
+              isOutOfStock
+                ? `
+                  <div class="out-of-stock-badge">
+                    <span>Out of Stock</span>
+                  </div>
+                `
+                : product.label
                 ? `
                   <span class="product-label">
                     ${escapeHTML(product.label)}
@@ -2792,23 +2843,13 @@
         .join("");
 
       const subtotal = getCartSubtotal();
-      const deliveryFee = getDeliveryFee(subtotal);
+      const deliveryFee = getDeliveryFee(getCartQuantity());
       const total = subtotal + deliveryFee;
 
-      const freeMinimum = Number(
-        store.freeDeliveryMinimum || 0
-      );
-
-      let deliveryMessage = "";
-
-      if (
-        deliveryFee === 0 &&
-        freeMinimum > 0
-      ) {
-        deliveryMessage = "Free";
-      } else {
-        deliveryMessage = formatMoney(deliveryFee);
-      }
+      const deliveryMessage =
+        deliveryFee === 0
+          ? "Free"
+          : formatMoney(deliveryFee);
 
       cartFooter.innerHTML = `
         <div class="summary-row">
@@ -2853,7 +2894,7 @@
       }
 
       const subtotal = getCartSubtotal();
-      const deliveryFee = getDeliveryFee(subtotal);
+      const deliveryFee = getDeliveryFee(getCartQuantity());
       const estimatedTotal = subtotal + deliveryFee;
 
       const lines = [
@@ -2930,11 +2971,17 @@
 
     function openContactModal() {
       contactError.hidden = true;
-      contactPhoneInput.value = "";
+      contactPhoneInput.value = `${PHONE_COUNTRY_CODE} `;
       contactUsernameInput.value = "";
       contactOverlay.hidden = false;
       lockBody();
       contactPhoneInput.focus();
+
+      const cursorPosition = contactPhoneInput.value.length;
+      contactPhoneInput.setSelectionRange(
+        cursorPosition,
+        cursorPosition
+      );
     }
 
     function closeContactModal() {
@@ -2943,7 +2990,10 @@
     }
 
     async function submitContactOrder() {
-      const phone    = contactPhoneInput.value.trim();
+      const phoneRaw = contactPhoneInput.value.trim();
+      const phone    = phoneHasNumber(phoneRaw)
+        ? normalizePhone(phoneRaw)
+        : "";
       const username = normalizeTelegramUsername(contactUsernameInput.value);
 
       if (!phone && !username) {
@@ -2959,7 +3009,7 @@
 
     async function placeOrder(user, contact) {
       const subtotal = getCartSubtotal();
-      const delivery = getDeliveryFee(subtotal);
+      const delivery = getDeliveryFee(getCartQuantity());
       const total    = subtotal + delivery;
       const orderId  = "ORD-" + Date.now();
 

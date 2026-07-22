@@ -60,18 +60,41 @@ const SELLER_CHAT_KEY = "SELLER_CHAT_ID";
 // HTTP ENTRY POINTS
 // ─────────────────────────────────────────────────────────────────────────────
 
+const SHOP_CACHE_KEY = "shop_data_v1";
+const SHOP_CACHE_TTL = 120; // seconds — how long a cached response is served before re-reading the sheet
+
 function doGet(e) {
   try {
     if (e.parameter.setup === "seller") return handleSellerSetup(e);
     if (!SPREADSHEET_ID) return jsonError("SPREADSHEET_ID is not configured in Script Properties.");
 
+    // Serve from cache when possible — reading the whole sheet on every
+    // request is the main source of load latency, so this makes repeat
+    // requests within SHOP_CACHE_TTL seconds near-instant.
+    var cache  = CacheService.getScriptCache();
+    var cached = e.parameter.fresh ? null : cache.get(SHOP_CACHE_KEY);
+
+    if (cached) {
+      return ContentService
+        .createTextOutput(cached)
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
+    var payload = JSON.stringify({
+      store:    getConfig(ss),
+      products: getProducts(ss)
+    });
+
+    try {
+      cache.put(SHOP_CACHE_KEY, payload, SHOP_CACHE_TTL);
+    } catch (cacheErr) {
+      // Payload too large for the cache (>100KB) — fine, just skip caching.
+    }
+
     return ContentService
-      .createTextOutput(JSON.stringify({
-        store:    getConfig(ss),
-        products: getProducts(ss)
-      }))
+      .createTextOutput(payload)
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (err) {
@@ -201,40 +224,109 @@ function parsePipe(value) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ONE-TIME MIGRATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Run this once from the Apps Script editor (select "migrateOrdersHeader" in
+ * the function dropdown, then click Run) if your Orders sheet is missing the
+ * "Contact Phone" / "Order Source" columns. It appends whichever of those two
+ * are missing to the end of the header row — it never repositions or rewrites
+ * existing columns, so your current data and column order are untouched.
+ * saveOrder() does this automatically on the next order too, so running this
+ * manually is optional — it just makes the columns appear immediately instead
+ * of waiting for the next order. Safe to run more than once.
+ */
+function migrateOrdersHeader() {
+  if (!SPREADSHEET_ID) {
+    Logger.log("SPREADSHEET_ID is not configured in Script Properties.");
+    return;
+  }
+
+  var ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName("Orders");
+
+  if (!sheet || sheet.getLastRow() < 1) {
+    Logger.log("No Orders sheet found — nothing to migrate, it will be created correctly on the next order.");
+    return;
+  }
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var missing = ["Contact Phone", "Order Source"].filter(function(h) {
+    return headers.indexOf(h) === -1;
+  });
+
+  if (missing.length === 0) {
+    Logger.log("Already migrated — nothing to do.");
+    return;
+  }
+
+  sheet.getRange(1, headers.length + 1, 1, missing.length)
+    .setValues([missing])
+    .setFontWeight("bold");
+
+  Logger.log("Added missing column(s): " + missing.join(", "));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ORDER STORAGE
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Base columns for a brand-new Orders sheet. Existing sheets keep whatever
+// column order they already have — saveOrder() below writes by header name,
+// not position, and appends any of these columns that are missing.
+var ORDER_COLUMNS = [
+  "Order ID", "Date & Time", "Buyer Name", "Username", "Telegram ID",
+  "Contact Phone", "Order Source", "Items",
+  "Subtotal ($)", "Delivery ($)", "Total ($)", "Status"
+];
 
 function saveOrder(ss, orderId, order) {
   var sheet = ss.getSheetByName("Orders");
 
   if (!sheet) {
     sheet = ss.insertSheet("Orders");
-    sheet.getRange(1, 1, 1, 13)
-      .setValues([[
-        "Order ID", "Date & Time",
-        "First Name", "Last Name", "Username", "Telegram ID",
-        "Language", "Premium",
-        "Items",
-        "Subtotal ($)", "Delivery ($)", "Total ($)", "Status"
-      ]])
+    sheet.getRange(1, 1, 1, ORDER_COLUMNS.length)
+      .setValues([ORDER_COLUMNS])
       .setFontWeight("bold");
   }
 
-  sheet.appendRow([
-    orderId,
-    new Date(),
-    order.firstName   || order.buyerName || "",
-    order.lastName    || "",
-    order.username    ? "@" + order.username : "",
-    order.telegramId  || "",
-    order.languageCode || "",
-    order.isPremium   ? "Yes" : "No",
-    order.itemsSummary || "",
-    Number(order.subtotal) || 0,
-    Number(order.delivery) || 0,
-    Number(order.total)    || 0,
-    "New"
-  ]);
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+  // Self-heal: add any of our required columns the sheet doesn't have yet
+  // (e.g. an older sheet that predates "Contact Phone" / "Order Source").
+  var missing = ORDER_COLUMNS.filter(function(h) { return headers.indexOf(h) === -1; });
+
+  if (missing.length > 0) {
+    sheet.getRange(1, headers.length + 1, 1, missing.length)
+      .setValues([missing])
+      .setFontWeight("bold");
+    headers = headers.concat(missing);
+  }
+
+  var buyerName = order.buyerName ||
+    [order.firstName, order.lastName].filter(Boolean).join(" ") || "";
+
+  var valuesByHeader = {
+    "Order ID":      orderId,
+    "Date & Time":   new Date(),
+    "Buyer Name":    buyerName,
+    "Username":      order.username ? "@" + order.username : "",
+    "Telegram ID":   order.telegramId || "",
+    "Contact Phone": order.contactPhone || "",
+    "Order Source":  order.telegramId ? "Telegram Mini App" : "Website",
+    "Items":         order.itemsSummary || "",
+    "Subtotal ($)":  Number(order.subtotal) || 0,
+    "Delivery ($)":  Number(order.delivery) || 0,
+    "Total ($)":     Number(order.total)    || 0,
+    "Status":        "New"
+  };
+
+  var row = headers.map(function(h) {
+    return Object.prototype.hasOwnProperty.call(valuesByHeader, h) ? valuesByHeader[h] : "";
+  });
+
+  sheet.appendRow(row);
 }
 
 function upsertCustomer(ss, order) {
@@ -288,20 +380,35 @@ function notifySeller(orderId, order) {
   if (!chatId || !BOT_TOKEN) return;
 
   var fullName  = [order.firstName || order.buyerName, order.lastName].filter(Boolean).join(" ") || "Guest";
-  var contactLink = order.telegramId
+  var isMiniApp = !!order.telegramId;
+
+  // Mini App buyers get a tg://user?id= deep link (works even without a
+  // username). Website buyers only have a username to go on, which is
+  // already a tappable link in usernameLine below, so no separate link here.
+  var contactLink = isMiniApp
     ? '<a href="tg://user?id=' + order.telegramId + '">💬 Tap to message buyer</a>'
     : "";
 
+  var usernameLine = order.username
+    ? "📎 <a href=\"https://t.me/" + encodeURIComponent(order.username) + "\">@" + esc(order.username) + "</a>\n"
+    : "";
+
   var msg =
-    "🛍️ <b>NEW ORDER — " + orderId + "</b>\n\n" +
+    "🛍️ <b>NEW ORDER — " + orderId + "</b>\n" +
+    (isMiniApp ? "🤖 Placed via Telegram Mini App\n" : "🌐 Placed via Website\n") +
+    "\n" +
 
     "━━━━ CUSTOMER ━━━━\n" +
     "👤 <b>" + esc(fullName) + "</b>" +
     (order.isPremium ? " ⭐" : "") + "\n" +
-    (order.username   ? "📎 @" + esc(order.username) + "\n" : "") +
-    (order.telegramId ? "🆔 " + esc(String(order.telegramId)) + "\n" : "") +
+    usernameLine +
+    (order.contactPhone ? "📱 " + esc(order.contactPhone) + "\n" : "") +
+    (order.telegramId   ? "🆔 " + esc(String(order.telegramId)) + "\n" : "") +
     (order.languageCode ? "🌐 " + esc(order.languageCode.toUpperCase()) + "\n" : "") +
     (contactLink ? contactLink + "\n" : "") +
+    (!isMiniApp && !order.username && !order.contactPhone
+      ? "⚠️ No contact info provided\n"
+      : "") +
 
     "\n━━━━ ITEMS ━━━━\n" +
     esc(order.itemsSummary || "") + "\n\n" +

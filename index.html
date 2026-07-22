@@ -452,6 +452,26 @@
       text-align: center;
     }
 
+    .loading-state {
+      padding: 100px 20px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .loading-spinner {
+      width: 28px;
+      height: 28px;
+      margin: 0 auto 14px;
+      border: 3px solid var(--border, #e5e5e5);
+      border-top-color: var(--accent, #111);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
     .empty-state-icon {
       font-size: 42px;
     }
@@ -840,6 +860,53 @@
       background: #ffffff;
     }
 
+    .contact-field {
+      display: block;
+      margin-bottom: 14px;
+    }
+
+    .contact-field span {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .contact-field input {
+      width: 100%;
+      height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 0 15px;
+      outline: none;
+      font-size: 14px;
+    }
+
+    .contact-field input:focus {
+      border-color: var(--text);
+      background: #ffffff;
+    }
+
+    .contact-divider {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin: -4px 0 14px;
+    }
+
+    .contact-error {
+      margin: -4px 0 14px;
+      color: var(--danger);
+      font-size: 13px;
+    }
+
     .summary-row {
       display: flex;
       justify-content: space-between;
@@ -1095,7 +1162,12 @@
       </select>
     </div>
 
-    <div id="productGrid" class="product-grid"></div>
+    <section id="loadingState" class="loading-state">
+      <div class="loading-spinner"></div>
+      <p>Loading products…</p>
+    </section>
+
+    <div id="productGrid" class="product-grid" hidden></div>
 
     <section id="emptyState" class="empty-state" hidden>
       <div class="empty-state-icon">🔍</div>
@@ -1182,6 +1254,44 @@
         <button id="closeConfirmBtn" class="icon-btn" type="button" aria-label="Close">×</button>
       </header>
       <div id="confirmContent" class="drawer-content"></div>
+    </section>
+  </div>
+
+  <div id="contactOverlay" class="overlay" hidden>
+    <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="contactTitle">
+      <header class="drawer-header">
+        <h2 id="contactTitle" class="drawer-title">Contact Details</h2>
+        <button id="closeContactBtn" class="icon-btn" type="button" aria-label="Close">×</button>
+      </header>
+
+      <div class="drawer-content">
+        <p style="margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.6;">
+          We confirm every order over Telegram. Please leave your Telegram
+          phone number or Telegram username so we can reach you.
+        </p>
+
+        <label class="contact-field">
+          <span>Telegram phone number</span>
+          <input id="contactPhoneInput" type="tel" placeholder="+855 12 345 678" autocomplete="tel" />
+        </label>
+
+        <div class="contact-divider">or</div>
+
+        <label class="contact-field">
+          <span>Telegram username</span>
+          <input id="contactUsernameInput" type="text" placeholder="@yourusername" autocomplete="off" />
+        </label>
+
+        <p id="contactError" class="contact-error" hidden>
+          Please enter your Telegram phone number or username.
+        </p>
+      </div>
+
+      <footer class="drawer-footer">
+        <button id="submitContactBtn" class="primary-btn" type="button">
+          Place Order
+        </button>
+      </footer>
     </section>
   </div>
 
@@ -1499,6 +1609,8 @@
     const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxzTR8TntsXLA3PPhLJ2WucrEBHok4XizKfpFkTH6jPVtq8-SdwZ4lqJ8EIds0A4UA/exec";
 
     const STORAGE_KEY = "tkonlineshop_cart_v1";
+    const CATALOGUE_CACHE_KEY = "tkonlineshop_catalogue_v1";
+    const CATALOGUE_CACHE_MAX_AGE = 5 * 60 * 1000; // 5 minutes
 
     const productDataElement = document.getElementById("productData");
 
@@ -1573,6 +1685,7 @@
     const resultCount = document.getElementById("resultCount");
     const productGrid = document.getElementById("productGrid");
     const emptyState = document.getElementById("emptyState");
+    const loadingState = document.getElementById("loadingState");
 
     const cartOverlay = document.getElementById("cartOverlay");
     const closeCartBtn = document.getElementById("closeCartBtn");
@@ -1586,6 +1699,13 @@
 
     const confirmOverlay  = document.getElementById("confirmOverlay");
     const confirmContent  = document.getElementById("confirmContent");
+
+    const contactOverlay = document.getElementById("contactOverlay");
+    const closeContactBtn = document.getElementById("closeContactBtn");
+    const contactPhoneInput = document.getElementById("contactPhoneInput");
+    const contactUsernameInput = document.getElementById("contactUsernameInput");
+    const contactError = document.getElementById("contactError");
+    const submitContactBtn = document.getElementById("submitContactBtn");
 
     const footerMeta = document.getElementById("footerMeta");
     const toast = document.getElementById("toast");
@@ -1690,7 +1810,12 @@
     }
 
     function unlockBody() {
-      if (cartOverlay.hidden && menuOverlay.hidden && confirmOverlay.hidden) {
+      if (
+        cartOverlay.hidden &&
+        menuOverlay.hidden &&
+        confirmOverlay.hidden &&
+        contactOverlay.hidden
+      ) {
         document.body.classList.remove("no-scroll");
       }
     }
@@ -2803,6 +2928,49 @@
       const tg   = window.Telegram?.WebApp;
       const user = tg?.initDataUnsafe?.user;
 
+      if (user) {
+        // Running inside the Telegram Mini App — identity is already known,
+        // so the order goes straight through and both admin and buyer are
+        // notified on Telegram automatically.
+        await placeOrder(user, null);
+      } else {
+        // Regular browser session — we have no Telegram identity to notify,
+        // so ask for a phone number or username the seller can reach out to.
+        closeCart();
+        openContactModal();
+      }
+    }
+
+    function openContactModal() {
+      contactError.hidden = true;
+      contactPhoneInput.value = "";
+      contactUsernameInput.value = "";
+      contactOverlay.hidden = false;
+      lockBody();
+      contactPhoneInput.focus();
+    }
+
+    function closeContactModal() {
+      contactOverlay.hidden = true;
+      unlockBody();
+    }
+
+    async function submitContactOrder() {
+      const phone    = contactPhoneInput.value.trim();
+      const username = normalizeTelegramUsername(contactUsernameInput.value);
+
+      if (!phone && !username) {
+        contactError.hidden = false;
+        return;
+      }
+
+      contactError.hidden = true;
+      closeContactModal();
+
+      await placeOrder(null, { phone, username });
+    }
+
+    async function placeOrder(user, contact) {
       const subtotal = getCartSubtotal();
       const delivery = getDeliveryFee(subtotal);
       const total    = subtotal + delivery;
@@ -2813,20 +2981,21 @@
       const buyerName  = user ? `${firstName} ${lastName}`.trim() : "Guest";
 
       const orderData = {
-        type:         "order",
-        orderId:      orderId,
-        buyerName:    buyerName,
-        firstName:    firstName,
-        lastName:     lastName,
-        username:     user?.username      || "",
-        telegramId:   String(user?.id     || ""),
-        languageCode: user?.language_code || "",
-        isPremium:    user?.is_premium    || false,
-        photoUrl:     user?.photo_url     || "",
-        itemsSummary: createOrderMessage(),
-        subtotal:     subtotal,
-        delivery:     delivery,
-        total:        total
+        type:          "order",
+        orderId:       orderId,
+        buyerName:     buyerName,
+        firstName:     firstName,
+        lastName:      lastName,
+        username:      user?.username || contact?.username || "",
+        telegramId:    String(user?.id || ""),
+        contactPhone:  contact?.phone  || "",
+        languageCode:  user?.language_code || "",
+        isPremium:     user?.is_premium    || false,
+        photoUrl:      user?.photo_url     || "",
+        itemsSummary:  createOrderMessage(),
+        subtotal:      subtotal,
+        delivery:      delivery,
+        total:         total
       };
 
       if (WEBHOOK_URL) {
@@ -2842,11 +3011,11 @@
         }
       } else {
         // Fallback: open Telegram chat if no webhook configured
-        const username = normalizeTelegramUsername(store.telegramUsername);
-        if (username && username !== "your_telegram_username") {
+        const shopUsername = normalizeTelegramUsername(store.telegramUsername);
+        if (shopUsername && shopUsername !== "your_telegram_username") {
           try { await navigator.clipboard.writeText(orderData.itemsSummary); } catch (_) {}
           window.open(
-            `https://t.me/${encodeURIComponent(username)}`,
+            `https://t.me/${encodeURIComponent(shopUsername)}`,
             "_blank",
             "noopener,noreferrer"
           );
@@ -2857,10 +3026,10 @@
       saveCart();
       updateCartBadge();
       closeCart();
-      showOrderConfirmation(orderId, total, buyerName, user);
+      showOrderConfirmation(orderId, total, buyerName, user, contact);
     }
 
-    function showOrderConfirmation(orderId, total, buyerName, user) {
+    function showOrderConfirmation(orderId, total, buyerName, user, contact) {
       const greeting  = buyerName && buyerName !== "Guest"
         ? `Thank you, <strong>${escapeHTML(buyerName)}</strong>!`
         : "Thank you!";
@@ -2868,6 +3037,12 @@
       const isPremium = user?.is_premium
         ? `<span style="font-size:11px;background:#6c3bff;color:#fff;
                         padding:2px 7px;border-radius:20px;margin-left:6px;">⭐ Premium</span>`
+        : "";
+      const contactLine = !user && contact
+        ? [
+            contact.username ? `@${escapeHTML(contact.username)}` : "",
+            contact.phone ? escapeHTML(contact.phone) : ""
+          ].filter(Boolean).join(" · ")
         : "";
 
       confirmContent.innerHTML = `
@@ -2880,7 +3055,11 @@
             ? `<p style="margin:0 0 18px;color:#6d6d6d;font-size:13px;">
                  ${username}${isPremium}
                </p>`
-            : `<p style="margin:0 0 18px;"></p>`}
+            : contactLine
+              ? `<p style="margin:0 0 18px;color:#6d6d6d;font-size:13px;">
+                   ${contactLine}
+                 </p>`
+              : `<p style="margin:0 0 18px;"></p>`}
 
           <div style="background:#f7f7f7;border-radius:6px;padding:14px 16px;
                       margin-bottom:18px;text-align:left;">
@@ -3291,6 +3470,25 @@
       unlockBody();
     });
 
+    closeContactBtn.addEventListener("click", closeContactModal);
+
+    contactOverlay.addEventListener("click", (event) => {
+      if (event.target === contactOverlay) {
+        closeContactModal();
+      }
+    });
+
+    submitContactBtn.addEventListener("click", submitContactOrder);
+
+    [contactPhoneInput, contactUsernameInput].forEach((input) => {
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          submitContactOrder();
+        }
+      });
+    });
+
     window.addEventListener("popstate", () => {
       const params = new URLSearchParams(
         window.location.search
@@ -3307,6 +3505,11 @@
 
     window.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") {
+        return;
+      }
+
+      if (!contactOverlay.hidden) {
+        closeContactModal();
         return;
       }
 
@@ -3331,6 +3534,55 @@
       =========================================================
     */
 
+    function readCatalogueCache() {
+      try {
+        const raw = localStorage.getItem(CATALOGUE_CACHE_KEY);
+        if (!raw) return null;
+
+        const cached = JSON.parse(raw);
+        if (Date.now() - (cached.cachedAt || 0) > CATALOGUE_CACHE_MAX_AGE) return null;
+
+        return cached;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function writeCatalogueCache(data) {
+      try {
+        localStorage.setItem(CATALOGUE_CACHE_KEY, JSON.stringify({
+          store:    data.store,
+          products: data.products,
+          cachedAt: Date.now()
+        }));
+      } catch (err) {
+        // Storage full or unavailable — caching is just an optimization, skip it.
+      }
+    }
+
+    function applyLiveData(data) {
+      if (data.store) Object.assign(store, data.store);
+      if (Array.isArray(data.products)) {
+        products.length = 0;
+        products.push(...data.products);
+      }
+    }
+
+    function revealCatalogue() {
+      loadingState.hidden = true;
+      productGrid.hidden  = false;
+
+      renderCatalogue();
+      renderMenu();
+
+      document.title = store.name || "TK Online Shop";
+
+      footerMeta.textContent =
+        `${products.length} products · ` +
+        `${store.currency || "USD"} · ` +
+        `Updated ${new Date().toLocaleDateString()}`;
+    }
+
     async function initializeApp() {
       // Init Telegram Mini App SDK
       const tg = window.Telegram?.WebApp;
@@ -3339,36 +3591,43 @@
         tg.expand();
       }
 
-      // Render immediately with hardcoded fallback data
-      renderCatalogue();
-      renderMenu();
       updateCartBadge();
-
-      // Load live data from Google Sheets via GAS (overrides hardcoded data)
-      if (WEBHOOK_URL) {
-        try {
-          const res  = await fetch(WEBHOOK_URL);
-          const data = await res.json();
-          if (data.store)                   Object.assign(store, data.store);
-          if (Array.isArray(data.products)) {
-            products.length = 0;
-            products.push(...data.products);
-          }
-          // Re-render with live data
-          renderCatalogue();
-          renderMenu();
-        } catch (err) {
-          console.warn("Could not load products from Google Sheets:", err);
-        }
-      }
-
-      document.title   = store.name || "TK Online Shop";
       sortSelect.value = state.sort;
 
-      footerMeta.textContent =
-        `${products.length} products · ` +
-        `${store.currency || "USD"} · ` +
-        `Updated ${new Date().toLocaleDateString()}`;
+      // Stale-while-revalidate: if we have a recent cached catalogue, show it
+      // immediately (no spinner), then quietly refresh from Google Sheets in
+      // the background. Only block on the network when there's nothing to
+      // show yet — that's the only case a spinner is needed.
+      const cached = WEBHOOK_URL ? readCatalogueCache() : null;
+
+      if (cached) {
+        applyLiveData(cached);
+        revealCatalogue();
+      }
+
+      if (WEBHOOK_URL) {
+        const refresh = fetch(WEBHOOK_URL)
+          .then((res) => res.json())
+          .then((data) => {
+            applyLiveData(data);
+            writeCatalogueCache(data);
+            revealCatalogue();
+            if (!detailView.hidden) renderProductDetail();
+          })
+          .catch((err) => {
+            console.warn(
+              cached
+                ? "Could not refresh products from Google Sheets, showing cached data:"
+                : "Could not load products from Google Sheets, using fallback data:",
+              err
+            );
+            if (!cached) revealCatalogue();
+          });
+
+        if (!cached) await refresh;
+      } else if (!cached) {
+        revealCatalogue();
+      }
 
       const params    = new URLSearchParams(window.location.search);
       const productId = params.get("product");

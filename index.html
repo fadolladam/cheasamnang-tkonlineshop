@@ -371,28 +371,6 @@
       text-transform: uppercase;
     }
 
-    .product-card.is-out-of-stock .product-image {
-      opacity: 0.45;
-    }
-
-    .out-of-stock-badge {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .out-of-stock-badge span {
-      padding: 6px 14px;
-      background: rgba(17, 17, 17, 0.85);
-      color: #ffffff;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
-
     .product-info {
       padding-top: 9px;
     }
@@ -640,16 +618,17 @@
     }
 
     .color-option {
-      display: flex;
-      align-items: center;
-      gap: 7px;
+      width: 42px;
+      height: 42px;
+      min-width: 42px;
+      padding: 0;
+      border: 1px solid #bdbdbd;
     }
 
-    .color-option-dot {
-      width: 17px;
-      height: 17px;
-      border-radius: 50%;
-      border: 1px solid #aaaaaa;
+    .color-option.active {
+      border: 2px solid var(--text);
+      outline: 2px solid #ffffff;
+      outline-offset: -5px;
     }
 
     .quantity-control {
@@ -2078,10 +2057,14 @@
           !keyword ||
           searchableText.includes(keyword);
 
+        const inStock =
+          Number(product.stock || 0) > 0;
+
         return (
           audienceMatches &&
           categoryMatches &&
-          searchMatches
+          searchMatches &&
+          inStock
         );
       });
 
@@ -2149,9 +2132,6 @@
     */
 
     function renderProductCard(product) {
-      const isOutOfStock =
-        Number(product.stock || 0) <= 0;
-
       const hasSale =
         product.originalPrice !== null &&
         product.originalPrice !== undefined &&
@@ -2175,10 +2155,10 @@
 
       return `
         <button
-          class="product-card ${isOutOfStock ? "is-out-of-stock" : ""}"
+          class="product-card"
           type="button"
           data-product-id="${escapeHTML(product.id)}"
-          aria-label="View ${escapeHTML(product.name)}${isOutOfStock ? " (Out of Stock)" : ""}"
+          aria-label="View ${escapeHTML(product.name)}"
         >
           <div class="product-image-wrap">
             <img
@@ -2190,13 +2170,7 @@
             />
 
             ${
-              isOutOfStock
-                ? `
-                  <div class="out-of-stock-badge">
-                    <span>Out of Stock</span>
-                  </div>
-                `
-                : product.label
+              product.label
                 ? `
                   <span class="product-label">
                     ${escapeHTML(product.label)}
@@ -2404,21 +2378,17 @@
             .map(
               (color) => `
                 <button
-                  class="option-btn color-option ${
+                  class="color-option ${
                     state.selectedColor === color.name
                       ? "active"
                       : ""
                   }"
                   type="button"
                   data-color="${escapeHTML(color.name)}"
-                >
-                  <span
-                    class="color-option-dot"
-                    style="background:${escapeHTML(color.value || "#dddddd")}"
-                  ></span>
-
-                  ${escapeHTML(color.name)}
-                </button>
+                  title="${escapeHTML(color.name)}"
+                  aria-label="${escapeHTML(color.name)}"
+                  style="background:${escapeHTML(color.value || "#dddddd")}"
+                ></button>
               `
             )
             .join("")
@@ -2926,7 +2896,7 @@
             : "",
           `Quantity: ${item.quantity}`,
           `Price: ${formatMoney(itemTotal)}`,
-          ""
+          "- - - - - - - - - - -"
         );
       });
 

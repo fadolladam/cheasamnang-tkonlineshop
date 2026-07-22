@@ -366,7 +366,11 @@ function saveOrder(ss, orderId, order) {
     "Buyer Name":    buyerName,
     "Username":      order.username ? "@" + order.username : "",
     "Telegram ID":   order.telegramId || "",
-    "Contact Phone": order.contactPhone || "",
+    // A leading "'" forces Sheets to store this as plain text instead of
+    // parsing it as a formula — appendRow() follows the same auto-parsing
+    // rules as typing into a cell, and a leading "+" (like in "+855 ...")
+    // is otherwise read as the start of a formula, producing #ERROR!.
+    "Contact Phone": order.contactPhone ? "'" + order.contactPhone : "",
     "Order Source":  order.telegramId ? "Telegram Mini App" : "Website",
     "Items":         order.itemsSummary || "",
     "Subtotal ($)":  Number(order.subtotal) || 0,

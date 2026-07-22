@@ -4,8 +4,13 @@
  * ── SETUP ────────────────────────────────────────────────────────────────────
  * 1. Go to script.google.com → New Project → rename it "TK Online Shop Webhook"
  * 2. Project Settings ⚙️ → Script Properties → Add:
- *      BOT_TOKEN      = your Telegram bot token from @BotFather
- *      SPREADSHEET_ID = your Google Sheet ID (from the sheet URL)
+ *      BOT_TOKEN       = your Telegram bot token from @BotFather
+ *      SPREADSHEET_ID  = your Google Sheet ID (from the sheet URL)
+ *      ADMIN_SETUP_KEY = any long random string you make up (protects the
+ *                        seller-setup endpoint below — this URL is public,
+ *                        so without a key anyone who finds it could register
+ *                        themselves as the seller and steal your order
+ *                        notifications)
  * 3. Paste this entire file (replace all default code)
  * 4. Deploy → New Deployment → Web App
  *    Execute as: Me  |  Who has access: Anyone
@@ -15,7 +20,7 @@
  *    b. Open: https://api.telegram.org/bot{YOUR_TOKEN}/getUpdates
  *    c. Find "chat": { "id": 123456789 }
  * 7. Register yourself as seller:
- *    [Web App URL]?setup=seller&chat_id=YOUR_CHAT_ID
+ *    [Web App URL]?setup=seller&chat_id=YOUR_CHAT_ID&key=YOUR_ADMIN_SETUP_KEY
  *
  * ── GOOGLE SHEET STRUCTURE ───────────────────────────────────────────────────
  *
@@ -52,9 +57,10 @@
  * Sheets "Orders" and "Customers" are created automatically on first order.
  */
 
-const BOT_TOKEN       = PropertiesService.getScriptProperties().getProperty("BOT_TOKEN");
-const SPREADSHEET_ID  = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
-const SELLER_CHAT_KEY = "SELLER_CHAT_ID";
+const BOT_TOKEN        = PropertiesService.getScriptProperties().getProperty("BOT_TOKEN");
+const SPREADSHEET_ID   = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
+const ADMIN_SETUP_KEY  = PropertiesService.getScriptProperties().getProperty("ADMIN_SETUP_KEY");
+const SELLER_CHAT_KEY  = "SELLER_CHAT_ID";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP ENTRY POINTS
@@ -102,11 +108,24 @@ function doGet(e) {
   }
 }
 
+const ORDER_RATE_LIMIT_KEY    = "order_rate_limit";
+const ORDER_RATE_LIMIT_MAX    = 20; // max orders accepted in the rolling window below
+const ORDER_RATE_LIMIT_WINDOW = 60; // seconds
+
 function doPost(e) {
   try {
     if (!SPREADSHEET_ID) return jsonError("SPREADSHEET_ID is not configured in Script Properties.");
 
-    const order   = JSON.parse(e.postData.contents);
+    const order = JSON.parse(e.postData.contents);
+
+    if (!isValidOrder(order)) {
+      return jsonError("Invalid order payload.");
+    }
+
+    if (isOrderRateLimited()) {
+      return jsonError("Too many orders right now — please try again in a minute.");
+    }
+
     const ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
     const orderId = "ORD-" + Date.now();
 
@@ -124,11 +143,47 @@ function doPost(e) {
   }
 }
 
+function isValidOrder(order) {
+  return !!order &&
+    typeof order.itemsSummary === "string" && order.itemsSummary.trim().length > 0 &&
+    Number(order.total) > 0;
+}
+
+// Soft, best-effort throttle against spam/flooding — the endpoint has to
+// stay public for the website/Mini App to call it, so this can't be a hard
+// security boundary, but it caps how much notification/sheet spam a script
+// or bot hitting the URL directly can generate. CacheService increments
+// aren't perfectly atomic under concurrent requests, which is fine here.
+function isOrderRateLimited() {
+  var cache   = CacheService.getScriptCache();
+  var current = Number(cache.get(ORDER_RATE_LIMIT_KEY)) || 0;
+
+  if (current >= ORDER_RATE_LIMIT_MAX) return true;
+
+  cache.put(ORDER_RATE_LIMIT_KEY, String(current + 1), ORDER_RATE_LIMIT_WINDOW);
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SELLER SETUP
 // ─────────────────────────────────────────────────────────────────────────────
 
 function handleSellerSetup(e) {
+  if (!ADMIN_SETUP_KEY) {
+    return ContentService.createTextOutput(
+      "❌ ADMIN_SETUP_KEY is not configured.\n\n" +
+      "Add a secret ADMIN_SETUP_KEY value in Project Settings ⚙️ → Script Properties " +
+      "(pick any long random string) before this endpoint can be used — this stops " +
+      "strangers who find your Web App URL from registering themselves as the seller."
+    ).setMimeType(ContentService.MimeType.TEXT);
+  }
+
+  if (e.parameter.key !== ADMIN_SETUP_KEY) {
+    return ContentService.createTextOutput(
+      "❌ Missing or incorrect key."
+    ).setMimeType(ContentService.MimeType.TEXT);
+  }
+
   var chatId = e.parameter.chat_id;
 
   if (!chatId) {
@@ -138,7 +193,7 @@ function handleSellerSetup(e) {
       "1. Send any message to your Telegram bot.\n" +
       "2. Open in browser: https://api.telegram.org/bot" + BOT_TOKEN + "/getUpdates\n" +
       "3. Find your id inside the chat object.\n" +
-      "4. Open: [this URL]?setup=seller&chat_id=YOUR_CHAT_ID"
+      "4. Open: [this URL]?setup=seller&chat_id=YOUR_CHAT_ID&key=YOUR_ADMIN_SETUP_KEY"
     ).setMimeType(ContentService.MimeType.TEXT);
   }
 

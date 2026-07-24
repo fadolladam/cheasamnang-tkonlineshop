@@ -419,6 +419,13 @@
       text-decoration: line-through;
     }
 
+    .product-promotion {
+      margin-top: 5px;
+      color: var(--primary);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
     .color-dots {
       display: flex;
       gap: 5px;
@@ -571,6 +578,16 @@
       color: #888888;
       font-size: 15px;
       text-decoration: line-through;
+    }
+
+    .detail-promotion {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 8px;
+      background: color-mix(in srgb, var(--primary) 12%, transparent);
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 600;
     }
 
     .detail-description {
@@ -1313,6 +1330,8 @@
     4. You can add multiple images.
     5. Color "value" may be a HEX code such as #000000.
     6. Stock is optional but useful.
+    7. promotionDate is optional. When set, it shows under the price,
+       e.g. "Limited Offer from 24 Jul - 30 Jul 2026".
   -->
 
   <script id="productData" type="application/json">
@@ -1399,6 +1418,7 @@
         "price": 12.90,
         "originalPrice": 16.90,
         "label": "Limited Offer",
+        "promotionDate": "Limited Offer from 24 Jul - 30 Jul 2026",
         "featured": true,
         "createdAt": "2026-07-17",
         "description": "A fitted ribbed T-shirt with a soft texture and elegant silhouette. Designed for comfortable everyday styling.",
@@ -1914,10 +1934,16 @@
       =========================================================
     */
 
+    function getInStockProducts() {
+      return products.filter(
+        (product) => Number(product.stock || 0) > 0
+      );
+    }
+
     function getUniqueValues(key) {
       return [
         ...new Set(
-          products
+          getInStockProducts()
             .map((product) => product[key])
             .filter(Boolean)
         )
@@ -1928,16 +1954,16 @@
 
     function getAudienceCount(audience) {
       if (audience === "All") {
-        return products.length;
+        return getInStockProducts().length;
       }
 
-      return products.filter(
+      return getInStockProducts().filter(
         (product) => product.audience === audience
       ).length;
     }
 
     function getCategoryCount(category) {
-      return products.filter((product) => {
+      return getInStockProducts().filter((product) => {
         const audienceMatches =
           state.audience === "All" ||
           product.audience === state.audience;
@@ -1951,10 +1977,12 @@
     }
 
     function getAvailableCategories() {
+      const inStockProducts = getInStockProducts();
+
       const filteredProducts =
         state.audience === "All"
-          ? products
-          : products.filter(
+          ? inStockProducts
+          : inStockProducts.filter(
               (product) =>
                 product.audience === state.audience
             );
@@ -2206,6 +2234,16 @@
                   : ""
               }
             </div>
+
+            ${
+              product.promotionDate
+                ? `
+                  <div class="product-promotion">
+                    ${escapeHTML(product.promotionDate)}
+                  </div>
+                `
+                : ""
+            }
 
             ${
               colorDots
@@ -2475,6 +2513,16 @@
                   : ""
               }
             </div>
+
+            ${
+              product.promotionDate
+                ? `
+                  <div class="detail-promotion">
+                    ${escapeHTML(product.promotionDate)}
+                  </div>
+                `
+                : ""
+            }
 
             <p class="detail-description">
               ${escapeHTML(product.description || "")}
@@ -3585,7 +3633,7 @@
       document.title = store.name || "TK Online Shop";
 
       footerMeta.textContent =
-        `${products.length} products · ` +
+        `${getInStockProducts().length} products · ` +
         `${store.currency || "USD"} · ` +
         `Updated ${new Date().toLocaleDateString()}`;
     }
